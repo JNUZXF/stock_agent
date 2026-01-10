@@ -3,11 +3,16 @@ import os
 import json
 import random
 import openai
+import arxiv
+
 import pysnowball as ball
 from openai import OpenAI
 from textwrap import dedent
 from datetime import datetime
 from dotenv import load_dotenv
+
+from write_code_tools import *
+
 from typing import Generator, Dict, Any, Optional, List
 
 INFO_TEMPLATE = dedent(
@@ -139,6 +144,92 @@ def generate_conversation_id() -> str:
     conversation_id = f"{time_part}{random_part}"
     return conversation_id
 
+
+# -------------------- 工具定义 --------------------
+
+class ArxivPaperTool:
+    """arXiv 论文搜索工具"""
+    
+    @staticmethod
+    def execute(**kwargs) -> str:
+        """
+        获取 arxiv 最新的 n 篇与关键词相关的论文。
+        
+        Args:
+            query: 搜索关键词（必须是英文）
+            num_papers: 最大搜索结果数
+            
+        Returns:
+            格式化的论文信息字符串
+            
+        Raises:
+            ValueError: 当 query 为空或 num_papers 无效时
+        """
+        query = kwargs["query"]
+        num_papers = kwargs["num_papers"]
+
+        if not query:
+            raise ValueError("query 不能为空")
+        if num_papers <= 0:
+            raise ValueError("num_papers 必须为正整数")
+
+        search = arxiv.Search(
+            query=query,
+            max_results=num_papers,
+            sort_by=arxiv.SortCriterion.SubmittedDate,
+            sort_order=arxiv.SortOrder.Descending,
+        )
+
+        client = arxiv.Client()
+        papers = []
+
+        for result in client.results(search):
+            author_names = [
+                author.name if hasattr(author, "name") else str(author) 
+                for author in result.authors
+            ]
+            submitted_at = (
+                result.published.strftime("%Y-%m-%d") 
+                if result.published else "未知"
+            )
+
+            paper_info = [
+                f"标题: {result.title.strip()}",
+                f"作者: {', '.join(author_names)}" if author_names else "作者: 未知",
+                f"摘要: {result.summary.strip()}",
+                f"提交日期: {submitted_at}",
+                f"链接: {result.entry_id}",
+                "-" * 80,
+            ]
+
+            papers.append("\n".join(paper_info))
+
+        return "\n\n".join(papers)
+
+class modular_coding:
+    @staticmethod
+    def execute(**kwargs) -> str:
+        """
+        根据需求，撰写项目架构中的某一个文件的代码
+        """
+        conversation_dir = kwargs["conversation_dir"]
+        model = kwargs["model"]
+        # 获取conversation_dir下面的PDF文件的绝对地址
+        all_codes = ""
+        for char in write_codebase(conversation_dir, model):
+            all_codes += char
+            yield char
+        # 将answer写入文件
+        folder_path = os.path.join(conversation_dir, "code")
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+        now = datetime.now()
+        # 格式化时间部分: yyyymmdd-hhmmss
+        time_part = now.strftime("%Y%m%d-%H%M%S")
+        file_path = os.path.join(folder_path, f"code-{time_part}.json")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(all_codes, indent=4))
+
 class StockAnalysisTool:
     """
     股票分析
@@ -161,6 +252,9 @@ class StockAnalysisTool:
 
         stock_info = get_stock_info(symbol)
         return stock_info
+
+
+
 
 class StockAnalysisAgent:
     """股票分析智能体
