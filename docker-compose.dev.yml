@@ -2,6 +2,45 @@
 # 开发环境Docker Compose配置（支持热重载）
 
 services:
+  # PostgreSQL数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: stock_analysis_postgres_dev
+    environment:
+      POSTGRES_DB: stock_analysis
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_INITDB_ARGS: "-E UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d stock_analysis"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - stock_analysis_network
+
+  # Redis缓存
+  redis:
+    image: redis:7-alpine
+    container_name: stock_analysis_redis_dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - stock_analysis_network
+
   # 后端服务（开发模式）
   backend:
     build:
@@ -14,12 +53,21 @@ services:
       - .env
     environment:
       - DOUBAO_API_KEY=${DOUBAO_API_KEY:-}
-      - xq_a_token=${xq_a_token:-}
+      - XQ_A_TOKEN=${xq_a_token:-}
+      - DATABASE_URL=postgresql+asyncpg://admin:password@postgres:5432/stock_analysis
+      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=development
+      - LOG_LEVEL=DEBUG
     volumes:
-      # 挂载代码目录，支持热重载
       - ./backend:/app
       - ./backend/files:/app/files
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+      - ./backend/logs:/app/logs
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - stock_analysis_network
@@ -33,7 +81,6 @@ services:
     ports:
       - "5173:5173"
     volumes:
-      # 挂载代码目录，支持热重载
       - ./frontend:/app
       - /app/node_modules
     environment:
@@ -43,6 +90,12 @@ services:
     restart: unless-stopped
     networks:
       - stock_analysis_network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
 
 networks:
   stock_analysis_network:
